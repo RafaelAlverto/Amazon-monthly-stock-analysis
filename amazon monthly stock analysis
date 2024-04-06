@@ -1,0 +1,96 @@
+import yfinance as yf
+import pandas as pd
+import pandas_datareader.data as web
+import statsmodels.api as sm
+import numpy as np
+from scipy.stats import gmean
+import datetime
+import matplotlib.pyplot as plt
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# Download Amazon's Stock Data
+amazon = yf.download('AMZN', start='2016-01-01', end=datetime.datetime.today().strftime('%Y-%m-%d'), interval='1mo')
+
+# Calculation of the monthly returns
+amazon['Returns'] = amazon['Adj Close'].pct_change()
+
+# Ensuring the index is a PeriodIndex with a monthly frequency
+if not isinstance(amazon.index, pd.PeriodIndex):
+    amazon.index = pd.to_datetime(amazon.index).to_period('M')
+
+# Statistical Analysis
+stats = {
+    'Arithmetic Mean': amazon['Returns'].mean() * 100,
+    'Geometric Mean': (gmean(amazon['Returns'].dropna() + 1) - 1) * 100,
+    'Highest Return': amazon['Returns'].max() * 100,
+    'Lowest Return': amazon['Returns'].min() * 100
+}
+
+# Download Fama-French Factors (use monthly factors)
+factors_monthly = web.DataReader('F-F_Research_Data_Factors', 'famafrench', start='2015-01-01')[0] / 100
+if not isinstance(factors_monthly.index, pd.PeriodIndex):
+    factors_monthly.index = pd.to_datetime(factors_monthly.index).to_period('M')
+
+# Excess returns for Amazon
+amazon['Excess Returns'] = amazon['Returns'] - factors_monthly['RF'].reindex(amazon.index, method='ffill')
+
+# Download Carhart momentum factor (monthly)
+momentum_factor = web.DataReader('F-F_Momentum_Factor', 'famafrench', start='2015-01-01')[0] / 100
+momentum_factor.rename(columns={'Mom   ': 'Mom'}, inplace=True)  # Ensure correct column name
+if not isinstance(momentum_factor.index, pd.PeriodIndex):
+    momentum_factor.index = pd.to_datetime(momentum_factor.index).to_period('M')
+momentum_factor.columns = ['Mom']  # Explicitly rename to 'Mom'
+
+# Combine the monthly return data with the factors
+data = pd.concat([amazon[['Excess Returns']], factors_monthly[['Mkt-RF', 'SMB', 'HML']], momentum_factor], axis=1).dropna()
+
+# Define function for both the regression and output
+def perform_regression(y, X, model_name):
+    X = sm.add_constant(X)  # adding a constant
+    model = sm.OLS(y, X).fit()
+    summary_str = model.summary().as_text().replace('const', 'Alpha')
+    alpha_value = model.params.get('const', 0)
+    alpha_pvalue = model.pvalues.get('const', 1)
+
+    # Check if alpha is statistically significant and positive
+    if alpha_value > 0 and alpha_pvalue < 0.05:
+        annualized_alpha = alpha_value * 12  # Annualize by multiplying by 12 months
+        print(f"This financial model displays an annualized alpha of {annualized_alpha:.5f}% with {alpha_pvalue:.3f} level of significance.\n")
+    else:
+        print(f"This financial model does not display a statistically significant positive alpha.\n")
+
+    return summary_str
+
+# Results
+
+# Output and plotting of the statistical analysis
+for key, value in stats.items():
+    print(f"{key}: {value:.4f}%")
+
+plt.figure(figsize=(14, 7))
+plt.plot(amazon.index.to_timestamp(), amazon['Returns'] * 100, color='blue',)
+plt.title('Overview of the monthly returns from Amazon')
+plt.xlabel('Date')
+plt.ylabel('Monthly Returns (%)')
+plt.grid(True)
+stats_text = "\n".join([f"{key}: {value:.2f}%" for key, value in stats.items()])
+plt.annotate(stats_text, xy=(0.95, 0.95), xycoords='axes fraction', fontsize=8, 
+             verticalalignment='top', horizontalalignment='right', 
+             bbox=dict(boxstyle="round,pad=0.3", edgecolor='black', facecolor='white'))
+plt.show()
+
+# CAPM Model
+print("\nCAPM Model Results:")
+capm_summary = perform_regression(data['Excess Returns'], data[['Mkt-RF']], "CAPM")
+print(capm_summary)
+
+# Fama-French 3-Factor Model
+print("\nFama-French 3-Factor Model Results:")
+ff3_summary = perform_regression(data['Excess Returns'], data[['Mkt-RF', 'SMB', 'HML']], "Fama-French 3-Factor")
+print(ff3_summary)
+
+# Carhart Four-Factor Model
+print("\nCarhart Four-Factor Model Results:")
+carhart_summary = perform_regression(data['Excess Returns'], data[['Mkt-RF', 'SMB', 'HML', 'Mom']], "Carhart Four-Factor")
+print(carhart_summary)
