@@ -6,18 +6,16 @@ import numpy as np
 from scipy.stats import gmean
 import datetime
 import matplotlib.pyplot as plt
-import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
 
-# Download Amazon's Stock Data
-amazon = yf.download('AMZN', start='2016-01-01', end=datetime.datetime.today().strftime('%Y-%m-%d'), interval='1mo')
 
-# Calculation of the monthly returns
+# Download Amazon Stock Data
+amazon = yf.download('AMZN', start='2016-01-01', end=datetime.date.today(), interval='1mo')
+
+# Calculate monthly returns
 amazon['Returns'] = amazon['Adj Close'].pct_change()
 
-# Ensuring the index is a PeriodIndex with a monthly frequency
-if not isinstance(amazon.index, pd.PeriodIndex):
-    amazon.index = pd.to_datetime(amazon.index).to_period('M')
+# Adjust index to period type
+amazon.index = pd.to_datetime(amazon.index).to_period('M')
 
 # Statistical Analysis
 stats = {
@@ -28,24 +26,22 @@ stats = {
 }
 
 # Download Fama-French Factors (use monthly factors)
-factors_monthly = web.DataReader('F-F_Research_Data_Factors', 'famafrench', start='2015-01-01')[0] / 100
-if not isinstance(factors_monthly.index, pd.PeriodIndex):
-    factors_monthly.index = pd.to_datetime(factors_monthly.index).to_period('M')
+factors = web.DataReader('F-F_Research_Data_Factors', 'famafrench', start='2015-01-01')[0] / 100
+factors.index = pd.to_datetime(factors.index.strftime('%Y-%m')).to_period('M')
 
-# Excess returns for Amazon
-amazon['Excess Returns'] = amazon['Returns'] - factors_monthly['RF'].reindex(amazon.index, method='ffill')
+# Calculate excess returns for Amazon
+amazon['Excess Returns'] = amazon['Returns'] - factors['RF'].reindex(amazon.index, method='ffill')
 
 # Download Carhart momentum factor (monthly)
 momentum_factor = web.DataReader('F-F_Momentum_Factor', 'famafrench', start='2015-01-01')[0] / 100
 momentum_factor.rename(columns={'Mom   ': 'Mom'}, inplace=True)  # Ensure correct column name
-if not isinstance(momentum_factor.index, pd.PeriodIndex):
-    momentum_factor.index = pd.to_datetime(momentum_factor.index).to_period('M')
-momentum_factor.columns = ['Mom']  # Explicitly rename to 'Mom'
+momentum_factor.index = pd.to_datetime(momentum_factor.index.strftime('%Y-%m')).to_period('M')
+momentum_factor.rename(columns={'Mom   ': 'Mom'}, inplace=True)  # Rename to 'Mom'
 
-# Combine the monthly return data with the factors
-data = pd.concat([amazon[['Excess Returns']], factors_monthly[['Mkt-RF', 'SMB', 'HML']], momentum_factor], axis=1).dropna()
+# Combine Amazon data with factors
+data = pd.concat([amazon[['Excess Returns']], factors[['Mkt-RF', 'SMB', 'HML']], momentum_factor], axis=1).dropna()
 
-# Define function for both the regression and output
+# Define function for regression and output
 def perform_regression(y, X, model_name):
     X = sm.add_constant(X)  # adding a constant
     model = sm.OLS(y, X).fit()
@@ -75,8 +71,8 @@ plt.xlabel('Date')
 plt.ylabel('Monthly Returns (%)')
 plt.grid(True)
 stats_text = "\n".join([f"{key}: {value:.2f}%" for key, value in stats.items()])
-plt.annotate(stats_text, xy=(0.95, 0.95), xycoords='axes fraction', fontsize=8, 
-             verticalalignment='top', horizontalalignment='right', 
+plt.annotate(stats_text, xy=(0.95, 0.95), xycoords='axes fraction', fontsize=8,
+             verticalalignment='top', horizontalalignment='right',
              bbox=dict(boxstyle="round,pad=0.3", edgecolor='black', facecolor='white'))
 plt.show()
 
